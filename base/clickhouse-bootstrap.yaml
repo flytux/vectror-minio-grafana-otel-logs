@@ -1,0 +1,162 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: clickhouse-bootstrap
+spec:
+  backoffLimit: 12
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: clickhouse-client
+        image: clickhouse/clickhouse-server:25.12
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+
+          HOST="clickhouse-clickhouse-headless"
+          USER="default"
+          PASSWORD="clickhouse"
+
+          wait_for_clickhouse() {
+            until clickhouse-client --host "$HOST" --user "$USER" --password "$PASSWORD" --query "SELECT 1" >/dev/null 2>&1; do
+              echo "waiting for clickhouse..."
+              sleep 2
+            done
+          }
+
+          wait_for_keeper() {
+            until clickhouse-client --host "$HOST" --user "$USER" --password "$PASSWORD" --query "SELECT 1 FROM system.zookeeper WHERE path = '/' LIMIT 1" >/dev/null 2>&1; do
+              echo "waiting for keeper connection..."
+              sleep 2
+            done
+          }
+
+          run_ddl() {
+            query="$1"
+            until clickhouse-client --host "$HOST" --user "$USER" --password "$PASSWORD" --query "$query" >/dev/null 2>&1; do
+              echo "ddl retry: $query"
+              sleep 3
+            done
+          }
+
+          wait_for_clickhouse
+          wait_for_keeper
+
+          existing_table_count="$(clickhouse-client --host "$HOST" --user "$USER" --password "$PASSWORD" --query "
+            SELECT count()
+            FROM system.tables
+            WHERE database = 'default'
+              AND name IN (
+                'otel_logs_local',
+                'otel_logs',
+                'otel_traces_local',
+                'otel_traces',
+                'otel_traces_trace_id_ts_local',
+                'otel_traces_trace_id_ts',
+                'otel_traces_trace_id_ts_mv_local',
+                'hyperdx_sessions_local',
+                'hyperdx_sessions'
+              )
+          ")"
+
+          if [ "$existing_table_count" = "9" ]; then
+            echo "bootstrap tables already exist; nothing to do"
+            exit 0
+          fi
+
+          run_ddl "
+            CREATE TABLE IF NOT EXISTS default.otel_logs_local ON CLUSTER default (
+                Timestamp DateTime64(9),
+                TimestampTime DateTime DEFAULT toDateTime(Timestamp),
+                Body String,
+                TraceId String,
+                SpanId String,
+                SeverityText String,
+                ServiceName String,
+                LogAttributes Map(String, String),
+                ResourceAttributes Map(String, String)
+            ) ENGINE = ReplicatedMergeTree()
+            ORDER BY (ServiceName, SeverityText, TimestampTime, Timestamp);
+          "
+
+          run_ddl "
+            CREATE TABLE IF NOT EXISTS default.otel_logs ON CLUSTER default AS default.otel_logs_local
+            ENGINE = Distributed('default', 'default', 'otel_logs_local', rand());
+          "
+
+          run_ddl "
+            CREATE TABLE IF NOT EXISTS default.otel_traces_local ON CLUSTER default (
+                TraceId String,
+                SpanId String,
+                ParentSpanId String,
+                SpanName String,
+                ServiceName String,
+                Duration UInt64,
+                Timestamp DateTime64(9),
+                SpanAttributes Map(String, String),
+                ResourceAttributes Map(String, String),
+                SpanKind String,
+                StatusCode String,
+                StatusMessage String
+            ) ENGINE = ReplicatedMergeTree()
+            ORDER BY (ServiceName, SpanName, Timestamp);
+          "
+
+          run_ddl "
+            CREATE TABLE IF NOT EXISTS default.otel_traces ON CLUSTER default AS default.otel_traces_local
+            ENGINE = Distributed('default', 'default', 'otel_traces_local', xxHash64(TraceId));
+          "
+
+          run_ddl "
+            CREATE TABLE IF NOT EXISTS default.otel_traces_trace_id_ts_local ON CLUSTER default (
+                TraceId String,
+                Start DateTime64(9),
+                End DateTime64(9)
+            ) ENGINE = ReplicatedMergeTree()
+            ORDER BY (TraceId, Start);
+          "
+
+          run_ddl "
+            CREATE TABLE IF NOT EXISTS default.otel_traces_trace_id_ts ON CLUSTER default AS default.otel_traces_trace_id_ts_local
+            ENGINE = Distributed('default', 'default', 'otel_traces_trace_id_ts_local', xxHash64(TraceId));
+          "
+
+          run_ddl "
+            CREATE MATERIALIZED VIEW IF NOT EXISTS default.otel_traces_trace_id_ts_mv_local ON CLUSTER default TO default.otel_traces_trace_id_ts_local AS
+            SELECT
+                TraceId,
+                Timestamp AS Start,
+                Timestamp AS End
+            FROM default.otel_traces_local;
+          "
+
+          run_ddl "
+            CREATE TABLE IF NOT EXISTS default.hyperdx_sessions_local ON CLUSTER default (
+                Timestamp           DateTime64(9),
+                TraceId             String,
+                SpanId              String,
+                TraceFlags          UInt32,
+                SeverityText        String,
+                SeverityNumber      Int32,
+                ServiceName         String,
+                Body                String,
+                ResourceSchemaUrl   String,
+                ResourceAttributes  Map(String, String),
+                ScopeSchemaUrl      String,
+                ScopeName           String,
+                ScopeVersion        String,
+                ScopeAttributes     Map(String, String),
+                LogAttributes       Map(String, String),
+                EventName           String,
+                TimestampTime       DateTime DEFAULT toDateTime(Timestamp)
+            ) ENGINE = ReplicatedMergeTree()
+            ORDER BY (ServiceName, TimestampTime, Timestamp);
+          "
+
+          run_ddl "
+            CREATE TABLE IF NOT EXISTS default.hyperdx_sessions ON CLUSTER default AS default.hyperdx_sessions_local
+            ENGINE = Distributed('default', 'default', 'hyperdx_sessions_local', rand());
+          "

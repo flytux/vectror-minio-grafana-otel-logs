@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: clickhouse-default-password
+type: Opaque
+stringData:
+  password: clickhouse
+---
+apiVersion: clickhouse.com/v1alpha1
+kind: KeeperCluster
+metadata:
+  name: clickhouse-keeper
+spec:
+  replicas: 1
+  dataVolumeClaimSpec:
+    storageClassName: local-path
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 5Gi
+  containerTemplate:
+    image:
+      repository: clickhouse/clickhouse-keeper
+      tag: "25.12"
+---
+apiVersion: clickhouse.com/v1alpha1
+kind: ClickHouseCluster
+metadata:
+  name: clickhouse
+spec:
+  shards: 3
+  replicas: 1
+  keeperClusterRef:
+    name: clickhouse-keeper
+  dataVolumeClaimSpec:
+    storageClassName: local-path
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 20Gi
+  containerTemplate:
+    image:
+      repository: clickhouse/clickhouse-server
+      tag: "25.12"
+  settings:
+    defaultUserPassword:
+      passwordType: password
+      secret:
+        name: clickhouse-default-password
+        key: password

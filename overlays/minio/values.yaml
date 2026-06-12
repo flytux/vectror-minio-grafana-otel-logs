@@ -1,0 +1,168 @@
+role: "Aggregator"
+
+service:
+  enabled: true
+  type: ClusterIP # 필요에 따라 NodePort나 LoadBalancer로 변경 가능
+  ports:
+    - name: otel-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otel-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+
+serviceAccount:
+  create: true
+  annotations: {}
+
+podLabels:
+  vector.dev/exclude: "true"
+
+# 핵심 Vector 데이터 파이프라인 커스텀 설정
+customConfig:
+  data_dir: "/var/lib/vector"
+
+  # 1. OpenTelemetry 소스 정의
+  sources:
+    otel_logs:
+      type: "opentelemetry"
+      grpc:
+        address: "0.0.0.0:4317"
+      http:
+        address: "0.0.0.0:4318"
+
+  # 2. VRL 트랜스폼 정의
+  transforms:
+    # 2.1. ClickHouse 컬럼 구조에 맞게 일반 로그 데이터 변환 (세션 로그 제외)
+    format_logs:
+      type: "remap"
+      inputs:
+        - "otel_logs.logs"
+      source: |
+        if exists(.attributes.sessionId) {
+          abort
+        }
+        .Timestamp = .timestamp
+        .Body = .message || .body || ""
+        .TraceId = .trace_id || ""
+        .SpanId = .span_id || ""
+        .SeverityText = .severity_text || ""
+        .ServiceName = .resource.attributes."service.name" || "unknown"
+        .LogAttributes = .attributes || {}
+        .ResourceAttributes = .resource.attributes || {}
+
+    # 2.2. ClickHouse 컬럼 구조에 맞게 트레이스 데이터 변환
+    format_traces:
+      type: "remap"
+      inputs:
+        - "otel_logs.traces"
+      source: |
+        .Timestamp = .timestamp
+        .TraceId = .trace_id
+        .SpanId = .span_id
+        .ParentSpanId = .parent_span_id || ""
+        .SpanName = .name || ""
+        .ServiceName = .resource.attributes."service.name" || "unknown"
+        .Duration = .duration_ns || 0
+        .SpanAttributes = .attributes || {}
+        .ResourceAttributes = .resource.attributes || {}
+        .SpanKind = .kind || ""
+        .StatusCode = .status.code || "UNSET"
+        .StatusMessage = .status.message || ""
+
+    # 2.3. HyperDX 세션 리플레이 데이터 변환 (sessionId가 포함된 로그만 해당)
+    format_sessions:
+      type: "remap"
+      inputs:
+        - "otel_logs.logs"
+      source: |
+        if !exists(.attributes.sessionId) {
+          abort
+        }
+        .Timestamp = .timestamp
+        .TraceId = .trace_id || ""
+        .SpanId = .span_id || ""
+        .TraceFlags = .trace_flags || 0
+        .SeverityText = .severity_text || ""
+        .SeverityNumber = .severity_number || 0
+        .ServiceName = .resource.attributes."service.name" || "unknown"
+        .Body = .message || .body || ""
+        .ResourceSchemaUrl = .resource.schema_url || ""
+        .ResourceAttributes = .resource.attributes || {}
+        .ScopeSchemaUrl = .scope.schema_url || ""
+        .ScopeName = .scope.name || ""
+        .ScopeVersion = .scope.version || ""
+        .ScopeAttributes = .scope.attributes || {}
+        .LogAttributes = .attributes || {}
+        .EventName = .event_name || ""
+
+  # 3. 싱크 정의
+  sinks:
+    # 3.1. MinIO(S3 호환) 압축 저장 싱크 정의
+    minio_archive:
+      type: "aws_s3"
+      inputs:
+        - "format_logs"
+      bucket: "otel-logs"
+      endpoint: "http://minio-service:9000"
+      region: "us-east-1"
+      key_prefix: "otel-logs/date=%Y-%m-%d/"
+      filename_append_uuid: true
+      force_path_style: true
+      auth:
+        access_key_id: "minioadmin"
+        secret_access_key: "minioadmin"
+      healthcheck: false
+      compression: "zstd"            # 로그 압축 방식 (gzip 또는 zstd 추천)
+      encoding:
+        codec: "json"               # 개별 로그 라인을 newline-delimited JSON 형태로 보관
+      batch:
+        max_bytes: 1048576          # 1MB 크기가 모이거나
+        timeout_secs: 30            # 혹은 30초가 지나면 압축 파일 빌드 후 전송
+
+    # 3.2. ClickHouse 로그 싱크
+    clickhouse_logs:
+      type: "clickhouse"
+      inputs:
+        - "format_logs"
+      endpoint: "http://clickhouse-clickhouse-headless:8123"
+      database: "default"
+      table: "otel_logs"
+      date_time_best_effort: true
+      skip_unknown_fields: true
+      auth:
+        strategy: "basic"
+        user: "default"
+        password: "clickhouse"
+
+    # 3.3. ClickHouse 트레이스 싱크
+    clickhouse_traces:
+      type: "clickhouse"
+      inputs:
+        - "format_traces"
+      endpoint: "http://clickhouse-clickhouse-headless:8123"
+      database: "default"
+      table: "otel_traces"
+      date_time_best_effort: true
+      skip_unknown_fields: true
+      auth:
+        strategy: "basic"
+        user: "default"
+        password: "clickhouse"
+
+    # 3.4. ClickHouse 세션 리플레이 싱크
+    clickhouse_sessions:
+      type: "clickhouse"
+      inputs:
+        - "format_sessions"
+      endpoint: "http://clickhouse-clickhouse-headless:8123"
+      database: "default"
+      table: "hyperdx_sessions"
+      date_time_best_effort: true
+      skip_unknown_fields: true
+      auth:
+        strategy: "basic"
+        user: "default"
+        password: "clickhouse"

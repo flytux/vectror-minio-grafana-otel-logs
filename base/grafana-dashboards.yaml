@@ -1,0 +1,290 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provisioning
+data:
+  minio-logs.yaml: |
+    apiVersion: 1
+    providers:
+      - name: minio-logs
+        orgId: 1
+        folder: MinIO Logs
+        type: file
+        disableDeletion: false
+        editable: true
+        allowUiUpdates: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/minio-logs
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-minio-logs
+data:
+  minio-log-attribute-filter.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": {
+              "type": "grafana",
+              "uid": "-- Grafana --"
+            },
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {}
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": true,
+                "displayName": "ts"
+              }
+            ]
+          },
+          "pluginVersion": "12.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "pluginVersion": "12.0.0",
+              "queryType": "table",
+              "rawSql": "SELECT Timestamp AS ts, ServiceName AS service, SeverityText AS severity, log_type, log_category, Body AS body, TraceId AS trace_id, SpanId AS span_id, LogAttributes AS log_attributes, archive_source FROM default.archive_logs_view WHERE $__timeFilter_ms(Timestamp) AND $__conditionalAll(log_type IN (${log_type:singlequote}), $log_type) AND $__conditionalAll(log_category IN (${log_category:singlequote}), $log_category) ORDER BY Timestamp DESC LIMIT 500",
+              "refId": "A"
+            }
+          ],
+          "title": "Filtered logs",
+          "type": "table"
+        }
+      ],
+      "preload": false,
+      "refresh": "30s",
+      "schemaVersion": 41,
+      "tags": [
+        "minio",
+        "logs",
+        "clickhouse"
+      ],
+      "templating": {
+        "list": [
+          {
+            "current": {
+              "selected": true,
+              "text": "All",
+              "value": "$__all"
+            },
+            "datasource": {
+              "type": "grafana-clickhouse-datasource",
+              "uid": "clickhouse"
+            },
+            "definition": "SELECT DISTINCT log_type FROM default.archive_logs_view WHERE $__timeFilter_ms(Timestamp) ORDER BY log_type",
+            "hide": 0,
+            "includeAll": true,
+            "label": "log_type",
+            "multi": true,
+            "name": "log_type",
+            "options": [],
+            "query": "SELECT DISTINCT log_type FROM default.archive_logs_view WHERE $__timeFilter_ms(Timestamp) ORDER BY log_type",
+            "refresh": 2,
+            "sort": 1,
+            "type": "query"
+          },
+          {
+            "current": {
+              "selected": true,
+              "text": "All",
+              "value": "$__all"
+            },
+            "datasource": {
+              "type": "grafana-clickhouse-datasource",
+              "uid": "clickhouse"
+            },
+            "definition": "SELECT DISTINCT log_category FROM default.archive_logs_view WHERE $__timeFilter_ms(Timestamp) ORDER BY log_category",
+            "hide": 0,
+            "includeAll": true,
+            "label": "log_category",
+            "multi": true,
+            "name": "log_category",
+            "options": [],
+            "query": "SELECT DISTINCT log_category FROM default.archive_logs_view WHERE $__timeFilter_ms(Timestamp) ORDER BY log_category",
+            "refresh": 2,
+            "sort": 1,
+            "type": "query"
+          }
+        ]
+      },
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "MinIO log attribute filter",
+      "uid": "minio-log-attr-filter",
+      "version": 1
+    }
+  minio-log-line-search.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": {
+              "type": "grafana",
+              "uid": "-- Grafana --"
+            },
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {}
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": true,
+                "displayName": "ts"
+              }
+            ]
+          },
+          "pluginVersion": "12.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "pluginVersion": "12.0.0",
+              "queryType": "table",
+              "rawSql": "SELECT Timestamp AS ts, ServiceName AS service, SeverityText AS severity, log_type, log_category, Body AS body, TraceId AS trace_id, SpanId AS span_id, archive_source FROM default.archive_logs_view WHERE $__timeFilter_ms(Timestamp) AND (${search_text:singlequote} = '*' OR positionCaseInsensitiveUTF8(Body, ${search_text:singlequote}) > 0) ORDER BY Timestamp DESC LIMIT 500",
+              "refId": "A"
+            }
+          ],
+          "title": "Line search results",
+          "type": "table"
+        }
+      ],
+      "preload": false,
+      "refresh": "30s",
+      "schemaVersion": 41,
+      "tags": [
+        "minio",
+        "logs",
+        "search"
+      ],
+      "templating": {
+        "list": [
+          {
+            "current": {
+              "selected": true,
+              "text": "*",
+              "value": "*"
+            },
+            "hide": 0,
+            "label": "search_text",
+            "name": "search_text",
+            "options": [
+              {
+                "selected": true,
+                "text": "*",
+                "value": "*"
+              }
+            ],
+            "query": "*",
+            "skipUrlSync": false,
+            "type": "textbox"
+          }
+        ]
+      },
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "MinIO log line search",
+      "uid": "minio-log-line-search",
+      "version": 1
+    }

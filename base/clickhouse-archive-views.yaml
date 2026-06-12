@@ -1,0 +1,81 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: clickhouse-archive-views-bootstrap-v1
+spec:
+  backoffLimit: 12
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: clickhouse-client
+        image: clickhouse/clickhouse-server:25.12
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+
+          HOST="clickhouse-clickhouse-headless"
+          USER="default"
+          PASSWORD="clickhouse"
+
+          until clickhouse-client --host "$HOST" --user "$USER" --password "$PASSWORD" --query "SELECT 1" >/dev/null 2>&1; do
+            echo "waiting for clickhouse..."
+            sleep 2
+          done
+
+          clickhouse-client --host "$HOST" --user "$USER" --password "$PASSWORD" --query "
+            CREATE OR REPLACE VIEW default.archive_logs_view AS
+            SELECT
+                parseDateTime64BestEffortOrNull(JSONExtractString(event, 'Timestamp'), 9) AS Timestamp,
+                if(empty(JSONExtractString(event, 'ServiceName')), 'unknown', JSONExtractString(event, 'ServiceName')) AS ServiceName,
+                if(empty(JSONExtractString(event, 'SeverityText')), 'INFO', JSONExtractString(event, 'SeverityText')) AS SeverityText,
+                JSONExtractString(event, 'TraceId') AS TraceId,
+                JSONExtractString(event, 'SpanId') AS SpanId,
+                JSONExtractString(event, 'Body') AS Body,
+                if(empty(JSONExtractString(JSONExtractRaw(event, 'LogAttributes'), 'log_type')), '(none)', JSONExtractString(JSONExtractRaw(event, 'LogAttributes'), 'log_type')) AS log_type,
+                if(empty(JSONExtractString(JSONExtractRaw(event, 'LogAttributes'), 'log_category')), '(none)', JSONExtractString(JSONExtractRaw(event, 'LogAttributes'), 'log_category')) AS log_category,
+                JSONExtractRaw(event, 'LogAttributes') AS LogAttributes,
+                JSONExtractRaw(event, 'ResourceAttributes') AS ResourceAttributes,
+                'otel-logs' AS archive_source
+            FROM
+            (
+                SELECT arrayJoin(JSONExtractArrayRaw(raw)) AS event
+                FROM s3(
+                    'http://minio-service:9000/otel-logs/otel-logs/date=*/*',
+                    'minioadmin',
+                    'minioadmin',
+                    'LineAsString',
+                    'raw String',
+                    'zstd'
+                )
+            )
+
+            UNION ALL
+
+            SELECT
+                parseDateTime64BestEffortOrNull(JSONExtractString(event, 'Timestamp'), 9) AS Timestamp,
+                if(empty(JSONExtractString(event, 'ServiceName')), 'unknown', JSONExtractString(event, 'ServiceName')) AS ServiceName,
+                if(empty(JSONExtractString(event, 'SeverityText')), 'INFO', JSONExtractString(event, 'SeverityText')) AS SeverityText,
+                JSONExtractString(event, 'TraceId') AS TraceId,
+                JSONExtractString(event, 'SpanId') AS SpanId,
+                JSONExtractString(event, 'Body') AS Body,
+                if(empty(JSONExtractString(JSONExtractRaw(event, 'LogAttributes'), 'log_type')), '(none)', JSONExtractString(JSONExtractRaw(event, 'LogAttributes'), 'log_type')) AS log_type,
+                if(empty(JSONExtractString(JSONExtractRaw(event, 'LogAttributes'), 'log_category')), '(none)', JSONExtractString(JSONExtractRaw(event, 'LogAttributes'), 'log_category')) AS log_category,
+                JSONExtractRaw(event, 'LogAttributes') AS LogAttributes,
+                JSONExtractRaw(event, 'ResourceAttributes') AS ResourceAttributes,
+                'grafana-audit' AS archive_source
+            FROM
+            (
+                SELECT arrayJoin(JSONExtractArrayRaw(raw)) AS event
+                FROM s3(
+                    'http://minio-service:9000/audit-logs/grafana-audit/date=*/*',
+                    'minioadmin',
+                    'minioadmin',
+                    'LineAsString',
+                    'raw String',
+                    'zstd'
+                )
+            )
+          "
