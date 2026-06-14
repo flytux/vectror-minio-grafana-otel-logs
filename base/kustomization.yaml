@@ -8,5 +8,6 @@ resources:
   - clickhouse.yaml
   - dice-service.yaml
   - grafana-audit-pipeline.yaml
+  - grafana-user-disable-job.yaml
   - grafana.yaml
   - grafana-dashboards.yaml

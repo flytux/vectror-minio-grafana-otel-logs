@@ -1,0 +1,67 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-audit-vector-config
+data:
+  vector.yaml: |
+    data_dir: /var/lib/vector
+
+    sources:
+      grafana_file_logs:
+        type: file
+        include:
+          - /var/log/grafana/*.log
+        read_from: beginning
+        ignore_older_secs: 86400
+
+    transforms:
+      grafana_security_audit:
+        type: remap
+        inputs:
+          - grafana_file_logs
+        source: |
+          .Body = string!(.message)
+          .Timestamp = .timestamp || now()
+          .ServiceName = "grafana"
+          .SeverityText = "INFO"
+          .LogAttributes = {}
+          .LogAttributes.log_type = "audit"
+          .LogAttributes.log_source = "grafana"
+          .LogAttributes.storage_target = "audit-logs"
+          .ResourceAttributes = {}
+          .ResourceAttributes."service.name" = "grafana"
+          .EventName = "grafana_audit"
+
+          if contains(.Body, "path=/login") || contains(.Body, "handler=/login") || contains(.Body, "path=/logout") || contains(.Body, "handler=/logout") || contains(.Body, "logger=auth") || contains(.Body, "logger=authn") || contains(.Body, "invalid username or password") || contains(.Body, "Successful Login") {
+            .LogAttributes.log_category = "auth"
+          } else if contains(.Body, "accesscontrol") || contains(.Body, "permission") || contains(.Body, "role=") || contains(.Body, "/api/access-control") || contains(.Body, "/api/admin") || contains(.Body, "/api/serviceaccounts") {
+            .LogAttributes.log_category = "authorization"
+          } else if contains(.Body, "/api/user") || contains(.Body, "/api/users") || contains(.Body, "/api/org/users") || contains(.Body, "/api/teams") || contains(.Body, "/api/preferences") || contains(.Body, "userId=") || contains(.Body, "uname=") || contains(.Body, "email=") {
+            .LogAttributes.log_category = "personalinfo"
+          } else {
+            abort
+          }
+
+          del(.message)
+          del(.file)
+          del(.host)
+          del(.source_type)
+
+    sinks:
+      grafana_audit_archive:
+        type: azure_blob
+        inputs:
+          - grafana_security_audit
+        container_name: "audit-logs"
+        account_name: "REPLACE_WITH_AZURE_STORAGE_ACCOUNT"
+        blob_endpoint: "https://REPLACE_WITH_AZURE_STORAGE_ACCOUNT.blob.core.windows.net/"
+        blob_prefix: "grafana-audit/date=%Y-%m-%d/"
+        blob_append_uuid: true
+        auth:
+          azure_credential_kind: workload_identity
+        compression: zstd
+        encoding:
+          codec: json
+        batch:
+          max_bytes: 1048576
+          timeout_secs: 30

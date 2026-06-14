@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: clickhouse-azureblobstorage
+  annotations:
+    azure.workload.identity/client-id: "REPLACE_WITH_AZURE_CLIENT_ID"
+    azure.workload.identity/tenant-id: "REPLACE_WITH_AZURE_TENANT_ID"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grafana-azureblobstorage
+  annotations:
+    azure.workload.identity/client-id: "REPLACE_WITH_AZURE_CLIENT_ID"
+    azure.workload.identity/tenant-id: "REPLACE_WITH_AZURE_TENANT_ID"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-azure-blob-storage-config
+data:
+  azure-blob-storage.xml: |
+    <clickhouse>
+      <named_collections>
+        <azure_archive_otel_logs>
+          <storage_account_url>https://REPLACE_WITH_AZURE_STORAGE_ACCOUNT.blob.core.windows.net/</storage_account_url>
+          <container>otel-logs</container>
+          <blob_path>otel-logs/date=*/*</blob_path>
+          <format>LineAsString</format>
+          <compression>zstd</compression>
+          <structure>raw String</structure>
+          <use_workload_identity>true</use_workload_identity>
+        </azure_archive_otel_logs>
+        <azure_archive_grafana_audit>
+          <storage_account_url>https://REPLACE_WITH_AZURE_STORAGE_ACCOUNT.blob.core.windows.net/</storage_account_url>
+          <container>audit-logs</container>
+          <blob_path>grafana-audit/date=*/*</blob_path>
+          <format>LineAsString</format>
+          <compression>zstd</compression>
+          <structure>raw String</structure>
+          <use_workload_identity>true</use_workload_identity>
+        </azure_archive_grafana_audit>
+      </named_collections>
+    </clickhouse>

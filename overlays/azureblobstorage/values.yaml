@@ -1,0 +1,157 @@
+role: "Aggregator"
+
+service:
+  enabled: true
+  type: ClusterIP
+  ports:
+    - name: otel-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otel-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+
+serviceAccount:
+  create: true
+  annotations:
+    azure.workload.identity/client-id: "REPLACE_WITH_AZURE_CLIENT_ID"
+    azure.workload.identity/tenant-id: "REPLACE_WITH_AZURE_TENANT_ID"
+
+podLabels:
+  vector.dev/exclude: "true"
+  azure.workload.identity/use: "true"
+
+customConfig:
+  data_dir: "/var/lib/vector"
+
+  sources:
+    otel_logs:
+      type: "opentelemetry"
+      grpc:
+        address: "0.0.0.0:4317"
+      http:
+        address: "0.0.0.0:4318"
+
+  transforms:
+    format_logs:
+      type: "remap"
+      inputs:
+        - "otel_logs.logs"
+      source: |
+        if exists(.attributes.sessionId) {
+          abort
+        }
+        .Timestamp = .timestamp
+        .Body = .message || .body || ""
+        .TraceId = .trace_id || ""
+        .SpanId = .span_id || ""
+        .SeverityText = .severity_text || ""
+        .ServiceName = .resource.attributes."service.name" || "unknown"
+        .LogAttributes = .attributes || {}
+        .ResourceAttributes = .resource.attributes || {}
+
+    format_traces:
+      type: "remap"
+      inputs:
+        - "otel_logs.traces"
+      source: |
+        .Timestamp = .timestamp
+        .TraceId = .trace_id
+        .SpanId = .span_id
+        .ParentSpanId = .parent_span_id || ""
+        .SpanName = .name || ""
+        .ServiceName = .resource.attributes."service.name" || "unknown"
+        .Duration = .duration_ns || 0
+        .SpanAttributes = .attributes || {}
+        .ResourceAttributes = .resource.attributes || {}
+        .SpanKind = .kind || ""
+        .StatusCode = .status.code || "UNSET"
+        .StatusMessage = .status.message || ""
+
+    format_sessions:
+      type: "remap"
+      inputs:
+        - "otel_logs.logs"
+      source: |
+        if !exists(.attributes.sessionId) {
+          abort
+        }
+        .Timestamp = .timestamp
+        .TraceId = .trace_id || ""
+        .SpanId = .span_id || ""
+        .TraceFlags = .trace_flags || 0
+        .SeverityText = .severity_text || ""
+        .SeverityNumber = .severity_number || 0
+        .ServiceName = .resource.attributes."service.name" || "unknown"
+        .Body = .message || .body || ""
+        .ResourceSchemaUrl = .resource.schema_url || ""
+        .ResourceAttributes = .resource.attributes || {}
+        .ScopeSchemaUrl = .scope.schema_url || ""
+        .ScopeName = .scope.name || ""
+        .ScopeVersion = .scope.version || ""
+        .ScopeAttributes = .scope.attributes || {}
+        .LogAttributes = .attributes || {}
+        .EventName = .event_name || ""
+
+  sinks:
+    azure_blob_storage:
+      type: "azure_blob"
+      inputs:
+        - "format_logs"
+      container_name: "otel-logs"
+      account_name: "REPLACE_WITH_AZURE_STORAGE_ACCOUNT"
+      blob_endpoint: "https://REPLACE_WITH_AZURE_STORAGE_ACCOUNT.blob.core.windows.net/"
+      blob_prefix: "otel-logs/date=%Y-%m-%d/"
+      blob_append_uuid: true
+      auth:
+        azure_credential_kind: "workload_identity"
+      compression: "zstd"
+      encoding:
+        codec: "json"
+      batch:
+        max_bytes: 1048576
+        timeout_secs: 30
+
+    clickhouse_logs:
+      type: "clickhouse"
+      inputs:
+        - "format_logs"
+      endpoint: "http://clickhouse-clickhouse-headless:8123"
+      database: "default"
+      table: "otel_logs"
+      date_time_best_effort: true
+      skip_unknown_fields: true
+      auth:
+        strategy: "basic"
+        user: "default"
+        password: "clickhouse"
+
+    clickhouse_traces:
+      type: "clickhouse"
+      inputs:
+        - "format_traces"
+      endpoint: "http://clickhouse-clickhouse-headless:8123"
+      database: "default"
+      table: "otel_traces"
+      date_time_best_effort: true
+      skip_unknown_fields: true
+      auth:
+        strategy: "basic"
+        user: "default"
+        password: "clickhouse"
+
+    clickhouse_sessions:
+      type: "clickhouse"
+      inputs:
+        - "format_sessions"
+      endpoint: "http://clickhouse-clickhouse-headless:8123"
+      database: "default"
+      table: "hyperdx_sessions"
+      date_time_best_effort: true
+      skip_unknown_fields: true
+      auth:
+        strategy: "basic"
+        user: "default"
+        password: "clickhouse"

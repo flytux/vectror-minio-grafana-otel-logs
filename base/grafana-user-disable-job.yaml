@@ -1,0 +1,136 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: grafana-user-disable-from-otel-logs
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: grafana-user-disable-from-otel-logs
+    spec:
+      restartPolicy: OnFailure
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: grafana
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: query-clickhouse
+          image: clickhouse/clickhouse-server:25.12
+          env:
+            - name: CLICKHOUSE_HOST
+              value: clickhouse-clickhouse-headless
+            - name: CLICKHOUSE_USER
+              value: default
+            - name: CLICKHOUSE_PASSWORD
+              value: clickhouse
+            - name: TARGET_DATE
+              value: ""
+            - name: TARGET_TIMEZONE
+              value: Asia/Seoul
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+
+              target_date="${TARGET_DATE:-$(date +%F)}"
+              target_timezone="${TARGET_TIMEZONE:-Asia/Seoul}"
+
+              until clickhouse-client \
+                --host "$CLICKHOUSE_HOST" \
+                --user "$CLICKHOUSE_USER" \
+                --password "$CLICKHOUSE_PASSWORD" \
+                --query "SELECT 1" >/dev/null 2>&1; do
+                echo "waiting for clickhouse..."
+                sleep 2
+              done
+
+              clickhouse-client \
+                --host "$CLICKHOUSE_HOST" \
+                --user "$CLICKHOUSE_USER" \
+                --password "$CLICKHOUSE_PASSWORD" \
+                --query "
+                  SELECT DISTINCT LogAttributes['id']
+                  FROM default.otel_logs
+                  WHERE LogAttributes['log_type'] = 'user-delete'
+                    AND notEmpty(LogAttributes['id'])
+                    AND Timestamp >= toDateTime64(concat('${target_date}', ' 00:00:00'), 9, '${target_timezone}')
+                    AND Timestamp < toDateTime64(concat('${target_date}', ' 01:00:00'), 9, '${target_timezone}')
+                  ORDER BY LogAttributes['id']
+                  FORMAT TSVRaw
+                " > /work/user_ids.txt
+
+              echo "queried $(wc -l < /work/user_ids.txt) user ids"
+          volumeMounts:
+            - name: work
+              mountPath: /work
+      containers:
+        - name: disable-grafana-users
+          image: python:3.12-slim
+          env:
+            - name: GRAFANA_DB_PATH
+              value: /var/lib/grafana/grafana.db
+            - name: USER_IDS_FILE
+              value: /work/user_ids.txt
+          command:
+            - python
+            - -c
+            - |
+              import os
+              import sqlite3
+
+              db_path = os.environ["GRAFANA_DB_PATH"]
+              user_ids_path = os.environ["USER_IDS_FILE"]
+
+              ids = []
+              with open(user_ids_path, "r", encoding="utf-8") as handle:
+                  for raw_line in handle:
+                      value = raw_line.strip()
+                      if value and value.isdigit():
+                          ids.append(int(value))
+
+              user_ids = sorted(set(ids))
+              if not user_ids:
+                  print("no matching user ids found")
+                  raise SystemExit(0)
+
+              connection = sqlite3.connect(db_path, timeout=30)
+              connection.execute("PRAGMA busy_timeout = 30000")
+
+              placeholders = ",".join("?" for _ in user_ids)
+              rows = connection.execute(
+                  f'SELECT id, login, is_disabled FROM "user" WHERE id IN ({placeholders}) ORDER BY id',
+                  user_ids,
+              ).fetchall()
+
+              if not rows:
+                  print("no grafana users matched the queried ids")
+                  raise SystemExit(0)
+
+              ids_to_disable = [(row[0],) for row in rows if not row[2]]
+              if ids_to_disable:
+                  connection.executemany(
+                      'UPDATE "user" SET is_disabled = 1 WHERE id = ?',
+                      ids_to_disable,
+                  )
+                  connection.commit()
+
+              print(f"matched={len(rows)} disabled={len(ids_to_disable)}")
+              for user_id, login, is_disabled in rows:
+                  final_disabled = 1 if not is_disabled and (user_id,) in ids_to_disable else is_disabled
+                  print(f"id={user_id} login={login} is_disabled={final_disabled}")
+          volumeMounts:
+            - name: work
+              mountPath: /work
+            - name: grafana-storage
+              mountPath: /var/lib/grafana
+      volumes:
+        - name: work
+          emptyDir: {}
+        - name: grafana-storage
+          persistentVolumeClaim:
+            claimName: grafana-pvc
