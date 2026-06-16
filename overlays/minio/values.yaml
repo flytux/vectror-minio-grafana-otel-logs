@@ -108,7 +108,7 @@ customConfig:
       bucket: "otel-logs"
       endpoint: "http://minio-service:9000"
       region: "us-east-1"
-      key_prefix: "otel-logs/date=%Y-%m-%d/"
+      key_prefix: "otel-logs/year=%Y/month=%m/date=%d/"
       filename_append_uuid: true
       force_path_style: true
       auth:

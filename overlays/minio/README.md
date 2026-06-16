@@ -33,7 +33,7 @@ Code: 27. DB::Exception: Cannot parse input ... (while reading the value of key 
 - sink 타입: `aws_s3`
 - 인코딩: `encoding.codec: json`
 - 압축: `compression: zstd`
-- 경로 prefix: `otel-logs/date=%Y-%m-%d/`
+- 경로 prefix: `otel-logs/year=%Y/month=%m/date=%d/`
 
 중요: 실제 파일 내용은 newline-delimited JSON이 아니라 **배치 단위 JSON 배열(`[...]`)** 이다.
 
@@ -59,7 +59,7 @@ FROM
 (
     SELECT arrayJoin(JSONExtractArrayRaw(raw)) AS event
     FROM s3(
-        'http://minio-service:9000/otel-logs/otel-logs/date=2026-06-12/*',
+        'http://minio-service:9000/otel-logs/otel-logs/year=2026/month=06/date=12/*',
         'minioadmin',
         'minioadmin',
         'LineAsString',
@@ -77,7 +77,7 @@ LIMIT 200;
 
 이 VIEW는 아래 두 경로를 합쳐서 읽는다.
 
-- `otel-logs/otel-logs/date=*/*`
+- `otel-logs/otel-logs/year=*/month=*/date=*/*`
 - `audit-logs/grafana-audit/date=*/*`
 
 노출 컬럼:

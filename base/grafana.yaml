@@ -29,11 +29,11 @@ data:
         orgId: 1
         editable: true
         isDefault: true
-        url: http://clickhouse-clickhouse-0-0-0.clickhouse-clickhouse-headless:8123
+        url: clickhouse-clickhouse-0-0-0.clickhouse-clickhouse-headless
         jsonData:
           host: clickhouse-clickhouse-0-0-0.clickhouse-clickhouse-headless
-          port: 8123
-          protocol: http
+          port: 9000
+          protocol: native
           username: default
           defaultDatabase: default
           validateSql: true

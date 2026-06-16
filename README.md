@@ -67,3 +67,9 @@
 ## 테스트
 
 `dice-service`는 배포 직후 자동으로 `dice-caller` 컨테이너를 통해 트래픽을 생성하며, 생성된 OTLP 데이터는 Vector를 거쳐 ClickHouse에 저장됩니다. Grafana에서 `otel_logs` 및 `otel_traces` 테이블을 조회하여 데이터를 확인할 수 있습니다.
+
+Grafana 비활성화 Job 테스트용으로는 아래 스크립트를 사용할 수 있습니다. 이 스크립트는 기본적으로 ingress 주소 `http://grafana.node-01`로 접속해 테스트 사용자를 Grafana에 등록하고, 기본값으로 `otel_logs_local`에 `deleted_user` 조건을 만족하는 로그를 넣습니다.
+
+```bash
+./scripts/prepare-grafana-user-disable-test.sh
+```

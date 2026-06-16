@@ -43,7 +43,7 @@ spec:
             (
                 SELECT arrayJoin(JSONExtractArrayRaw(raw)) AS event
                 FROM s3(
-                    'http://minio-service:9000/otel-logs/otel-logs/date=*/*',
+                    'http://minio-service:9000/otel-logs/otel-logs/year=*/month=*/date=*/*',
                     'minioadmin',
                     'minioadmin',
                     'LineAsString',

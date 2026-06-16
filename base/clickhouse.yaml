@@ -23,6 +23,13 @@ spec:
     image:
       repository: clickhouse/clickhouse-keeper
       tag: "25.12"
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
 ---
 apiVersion: clickhouse.com/v1alpha1
 kind: ClickHouseCluster
@@ -44,6 +51,13 @@ spec:
     image:
       repository: clickhouse/clickhouse-server
       tag: "25.12"
+    resources:
+      requests:
+        cpu: "1"
+        memory: 4Gi
+      limits:
+        cpu: "4"
+        memory: 16Gi
   settings:
     defaultUserPassword:
       passwordType: password
